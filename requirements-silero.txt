@@ -1,0 +1,3 @@
+# Опциональный офлайн-голос Silero
+-r requirements.txt
+torch>=2.2
