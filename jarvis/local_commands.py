@@ -8,10 +8,10 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import actions, extras
+from . import actions, extras, word
 from .calc import evaluate, format_result
 from .memory import parse_reminder
-from .text_style import format_dictation
+from .text_style import format_dictation, match_raw_tail
 
 JOKES = [
     "Программист ставит на ночь два стакана: один с водой, если захочет пить, "
@@ -577,6 +577,202 @@ _FILE_FOLDER_HINTS = {
 }
 
 
+def _word_phrase(value: str, raw: str) -> str:
+    """Текст для Word без завершающей точки, которую добавила нормализация."""
+    result = format_dictation(value, raw)
+    if not result:
+        return result
+    # «Проверка.» внутри команды замены — это не конец предложения.
+    if result.endswith((".", "!", "?")) and not raw.strip().endswith(
+        (".", "!", "?")
+    ):
+        result = result.rstrip(".!?").strip()
+    return result
+
+
+def _raw_tail(value: str, raw: str) -> str:
+    """Возвращает исходное написание хвоста команды, если оно распознано."""
+    return match_raw_tail(value, raw) or value
+
+
+def _handle_word(text: str, raw: str = "") -> str | None:
+    """Работа с Microsoft Word: документы, текст, PDF, таблицы."""
+    explicit = bool(re.search(r"\b(?:ворд\w*|word|docx|докс)\b", text))
+    document = bool(re.search(r"\bдокумент\w*\b", text))
+    document_action = document and bool(
+        re.search(
+            r"\b(?:создай|создать|сделай|сделать|сохрани|сохранить|прочитай|"
+            r"прочти|добавь|допиши|вставь|закрой|замени|заменить|сколько|pdf|"
+            r"открой|открыть|написано|напиши|запиши|напечатай)\b",
+            text,
+        )
+    )
+    structural = bool(
+        re.match(
+            r"^(?:добавь|вставь)\s+(?:заголовок|таблицу|разрыв\s+страницы)|"
+            r"^(?:сохрани|сохранить|экспорт\w*|выгрузи)\b.*\bpdf\b|"
+            r"^(?:новая|добавь)\s+страниц|"
+            r"^(?:сколько|посчитай)\s+слов|^объ[её]м\s+документа|"
+            r"^(?:какой|что)\s+(?:документ\s+)?открыт|"
+            r"^(?:замени|заменить)\s+",
+            text,
+        )
+    )
+    if not (explicit or document_action or structural):
+        return None
+    if not word.available():
+        return (
+            "Microsoft Word не установлен, сэр. "
+            "Поставьте Word или скажите «создай текстовый файл»."
+        )
+
+    if re.fullmatch(
+        r"(?:создай|создать|сделай|сделать|новый|открой|открыть)\s+"
+        r"(?:новый\s+)?(?:документ|файл)\s*(?:ворд\w*|word)?|"
+        r"(?:создай|создать|сделай|сделать|открой|открыть)\s+"
+        r"(?:вордовск\w*|word)\s+(?:документ|файл)|"
+        r"(?:создай|открой)\s+(?:ворд\w*|word)",
+        text,
+    ):
+        name = word.new_document()
+        return f"Создал документ «{name}», сэр."
+
+    match = re.fullmatch(
+        r"(?:создай|создать|сделай|сделать)\s+"
+        r"(?:документ|файл)\s+(?:ворд\w*|word)\s+(?:с\s+текстом\s+)?(.+)|"
+        r"(?:создай|создать|сделай|сделать)\s+"
+        r"(?:вордовск\w*|word)\s+(?:документ|файл)\s+"
+        r"(?:с\s+текстом\s+)?(.+)",
+        text,
+    )
+    if match:
+        body = format_dictation(match.group(1) or match.group(2), raw)
+        name = word.new_document(body)
+        return f"Создал документ «{name}» с текстом, сэр."
+
+    if re.fullmatch(
+        r"(?:сколько|посчитай)\s+слов(?:\s+в\s+(?:документе|ворде|тексте))?|"
+        r"объ[её]м\s+документа",
+        text,
+    ):
+        count = word.word_count()
+        if count is None:
+            return "Не вижу открытого документа, сэр."
+        return f"В документе {count} слов, сэр."
+
+    if re.fullmatch(r"(?:какой|что)\s+(?:документ\s+)?открыт|"
+                    r"какой\s+документ\s+(?:сейчас\s+)?активен", text):
+        info = word.document_info()
+        if info is None:
+            return "Не вижу открытого документа, сэр."
+        tail = ""
+        if info.get("words") is not None:
+            tail = f", слов: {info['words']}"
+        if info.get("pages") is not None:
+            tail += f", страниц: {info['pages']}"
+        return f"Открыт документ «{info['name']}»{tail}."
+
+    match = re.fullmatch(
+        r"открой\s+(?:документ|файл)\s+(?:ворд\s+)?(.+)", text
+    )
+    if match:
+        name = word.open_document(_raw_tail(match.group(1), raw).strip(" ,."))
+        if name is None:
+            return None  # пусть попробует обычный поиск файлов
+        return f"Открыл документ «{name}», сэр."
+
+    match = re.fullmatch(
+        r"(?:прочитай|прочти|что\s+(?:написано\s+)?в)\s+"
+        r"(?:документ|документе|ворде)(?:\s+(.+))?",
+        text,
+    )
+    if match:
+        body = word.read_document(
+            _raw_tail(match.group(1), raw) if match.group(1) else ""
+        )
+        if body is None:
+            return "Не вижу открытого документа, сэр."
+        if not body:
+            return "Документ пуст, сэр."
+        return "В документе: " + _truncate(body)
+
+    match = re.fullmatch(
+        r"(?:добавь|вставь|сделай)\s+таблицу\s+(\d{1,2})\s+на\s+(\d{1,2})",
+        text,
+    )
+    if match:
+        rows, cols = int(match.group(1)), int(match.group(2))
+        if word.add_table(rows, cols):
+            return f"Добавил таблицу {rows} на {cols}, сэр."
+        return "Не удалось добавить таблицу, сэр."
+
+    match = re.fullmatch(
+        r"(?:добавь|вставь)\s+заголовок(?:\s+(\d)\s+уровня)?\s+(.+)", text
+    )
+    if match:
+        level = int(match.group(1) or 1)
+        body = _word_phrase(match.group(2), raw)
+        if word.add_heading(body, level):
+            return f"Добавил заголовок «{body}», сэр."
+        return "Не удалось добавить заголовок, сэр."
+
+    match = re.fullmatch(
+        r"(?:добавь|допиши|вставь|напиши|запиши|напечатай)\s+"
+        r"(?:в\s+(?:документ|ворд\w*|word)\s+)?"
+        r"(?:текст\s+)?(.+)",
+        text,
+    )
+    if match:
+        body = format_dictation(match.group(1), raw)
+        name = word.append_text(body)
+        if name is None:
+            return "Не удалось добавить текст в документ, сэр."
+        return f"Добавил текст в документ «{name}», сэр."
+
+    if re.fullmatch(
+        r"(?:сохрани|сохранить)\s+(?:документ\s+)?(?:в\s+)?pdf|"
+        r"(?:экспорт|выгрузи)\s+(?:документ\s+)?в\s+pdf|сделай\s+pdf",
+        text,
+    ):
+        target = word.export_pdf()
+        if target is None:
+            return "Не вижу открытого документа, сэр."
+        return f"Сохранил PDF: {target.name}, сэр."
+
+    match = re.fullmatch(
+        r"(?:сохрани|сохранить)\s+(?:документ|ворд|файл)"
+        r"(?:\s+как\s+(.+))?", text
+    )
+    if match:
+        target = word.save_document(
+            _raw_tail(match.group(1), raw) if match.group(1) else ""
+        )
+        if target is None:
+            return "Не вижу открытого документа, сэр."
+        return f"Сохранил документ «{target.name}», сэр."
+
+    match = re.fullmatch(r"(?:замени|заменить)\s+(.+?)\s+на\s+(.+)", text)
+    if match:
+        old = _word_phrase(match.group(1), raw)
+        new = _word_phrase(match.group(2), raw)
+        if word.replace_all(old, new):
+            return f"Заменил «{old}» на «{new}», сэр."
+        return "Не удалось заменить текст, сэр."
+
+    if re.fullmatch(r"(?:закрой|закрыть)\s+(?:документ|ворд)(?:\s+без\s+сохранения)?", text):
+        save = "без сохранения" not in text
+        name = word.close_document(save=save)
+        if name is None:
+            return "Не вижу открытого документа, сэр."
+        return f"Закрыл документ «{name}», сэр."
+
+    if re.fullmatch(r"(?:новая|добавь)\s+страниц[ау]|разрыв\s+страницы", text):
+        if word.page_break():
+            return "Добавил новую страницу, сэр."
+        return "Не удалось добавить страницу, сэр."
+    return None
+
+
 def _handle_settings(text: str) -> str | None:
     found = extras.windows_settings(text)
     if found is None:
@@ -797,6 +993,7 @@ def handle(brain, text: str) -> str | None:
         _handle_system,
         _handle_folders,
         _handle_settings,
+        _handle_word,
         _handle_files,
         _handle_units,
         _handle_password,
@@ -804,7 +1001,7 @@ def handle(brain, text: str) -> str | None:
     ):
         answer = (
             handler(text, raw)
-            if handler is _handle_clipboard
+            if handler in (_handle_clipboard, _handle_word)
             else handler(text)
         )
         if answer is not None:

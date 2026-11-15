@@ -1,7 +1,7 @@
 """Инструменты, которые LLM может вызывать для управления компьютером."""
 from __future__ import annotations
 
-from . import actions, services
+from . import actions, services, word
 from .calc import evaluate, format_result
 from .memory import parse_reminder
 
@@ -10,6 +10,8 @@ SYSTEM_HINT = (
     "через инструменты: открывать программы, сайты и папки, управлять браузером, "
     "вкладками, окнами, громкостью, медиа, буфером обмена, печатать текст, "
     "делать скриншоты, ставить заметки и напоминания, узнавать состояние системы. "
+    "Также можешь работать с Microsoft Word: создавать документы, дописывать "
+    "текст, добавлять заголовки и таблицы, сохранять и экспортировать в PDF. "
     "Вызывай инструмент только когда пользователь явно просит выполнить действие. "
     "Не выдумывай результат: дождись ответа инструмента. "
     "Никогда не выключай и не перезагружай компьютер без прямой команды."
@@ -380,6 +382,58 @@ TOOL_SPECS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "word",
+            "description": (
+                "Работа с Microsoft Word: создать или открыть документ, "
+                "дописать текст, добавить заголовок или таблицу, прочитать "
+                "документ, заменить текст, сохранить, экспортировать в PDF."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "create",
+                            "open",
+                            "append",
+                            "read",
+                            "save",
+                            "pdf",
+                            "heading",
+                            "table",
+                            "replace",
+                            "word_count",
+                            "info",
+                            "close",
+                        ],
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Текст для записи, поиска или замены.",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Имя или путь документа.",
+                    },
+                    "new_text": {
+                        "type": "string",
+                        "description": "Новый текст для action=replace.",
+                    },
+                    "level": {
+                        "type": "integer",
+                        "description": "Уровень заголовка 1-3 для action=heading.",
+                    },
+                    "rows": {"type": "integer", "description": "Строк в таблице."},
+                    "cols": {"type": "integer", "description": "Столбцов в таблице."},
+                },
+                "required": ["action"],
+            },
+        },
+    },
 ]
 
 
@@ -551,6 +605,82 @@ def _system_info(kind: str) -> str:
             f"{name} — {mb} мегабайт" for name, mb in items
         ) + "."
     return f"Неизвестный показатель: {kind}."
+
+
+def _word_tool(args: dict) -> str:
+    """Инструмент Word для LLM-управления компьютером."""
+    if not word.available():
+        return "Microsoft Word не установлен."
+    action = str(args.get("action") or "").strip().lower()
+    text = str(args.get("text") or "").strip()
+    name = str(args.get("name") or "").strip()
+
+    if action == "create":
+        return f"Создал документ «{word.new_document(text)}»."
+    if action == "open":
+        opened = word.open_document(name)
+        return f"Открыл документ «{opened}»." if opened else f"Не нашёл документ «{name}»."
+    if action == "append":
+        if not text:
+            return "Не указан текст."
+        appended = word.append_text(text)
+        return (
+            f"Добавил текст в документ «{appended}»."
+            if appended
+            else "Не удалось добавить текст."
+        )
+    if action == "read":
+        body = word.read_document(name)
+        if body is None:
+            return "Документ не найден."
+        return "Документ пуст." if not body else f"Текст документа: {body[:800]}"
+    if action == "save":
+        target = word.save_document(name)
+        return f"Сохранил «{target.name}»." if target else "Не удалось сохранить."
+    if action == "pdf":
+        target = word.export_pdf(name)
+        return f"Сохранил PDF: {target.name}." if target else "Не удалось создать PDF."
+    if action == "heading":
+        if not text:
+            return "Не указан текст заголовка."
+        level = int(args.get("level") or 1)
+        return (
+            f"Добавил заголовок «{text}»."
+            if word.add_heading(text, level)
+            else "Не удалось добавить заголовок."
+        )
+    if action == "table":
+        rows = int(args.get("rows") or 2)
+        cols = int(args.get("cols") or 2)
+        return (
+            f"Добавил таблицу {rows} на {cols}."
+            if word.add_table(rows, cols)
+            else "Не удалось добавить таблицу."
+        )
+    if action == "replace":
+        new_text = str(args.get("new_text") or "")
+        if not text:
+            return "Не указан текст для замены."
+        return (
+            "Заменил текст."
+            if word.replace_all(text, new_text)
+            else "Не удалось заменить текст."
+        )
+    if action == "word_count":
+        count = word.word_count()
+        return f"В документе {count} слов." if count is not None else "Нет открытого документа."
+    if action == "info":
+        info = word.document_info()
+        if info is None:
+            return "Нет открытого документа."
+        return (
+            f"Документ «{info['name']}», слов: {info.get('words')}, "
+            f"страниц: {info.get('pages')}."
+        )
+    if action == "close":
+        closed = word.close_document(save=True)
+        return f"Закрыл «{closed}»." if closed else "Нет открытого документа."
+    return f"Неизвестное действие Word: {action}."
 
 
 def execute(name: str, args: dict, brain) -> str:
@@ -730,6 +860,8 @@ def execute(name: str, args: dict, brain) -> str:
                 if actions.close_app(app)
                 else f"Не удалось закрыть {app}."
             )
+        if name == "word":
+            return _word_tool(args)
     except Exception as exc:  # noqa: BLE001
         brain.log.exception("Инструмент %s: %s", name, exc)
         return f"Ошибка при выполнении {name}: {exc}"
