@@ -1,0 +1,61 @@
+{
+  "wake_words": [
+    "хряк",
+    "хряг"
+  ],
+  "model_dir": "models/vosk-model-small-ru-0.22",
+  "sample_rate": 16000,
+  "silence_timeout": 1.8,
+  "max_command_seconds": 12,
+  "followup_seconds": 30,
+  "followup_allow_llm": false,
+  "stt_engine": "gigaam",
+  "gigaam": {
+    "enabled": true,
+    "python": "python/python.exe",
+    "worker": "gigaam_worker.py",
+    "model": "gigaam-v3-e2e-ctc",
+    "quantization": "int8",
+    "download_root": "models/gigaam_e2e",
+    "timeout": 10,
+    "threads": 4,
+    "pre_roll_seconds": 3.0,
+    "restarts": 2
+  },
+  "voice": "ru-RU-DmitryNeural",
+  "voice_rate": "+10%",
+  "sapi_voice": "Microsoft Irina Desktop",
+  "tts_engine": "piper",
+  "silero": {
+    "enabled": false,
+    "speaker": "aidar",
+    "sample_rate": 48000,
+    "put_accent": true,
+    "put_yo": true
+  },
+  "piper": {
+    "enabled": true,
+    "voice": "denis"
+  },
+  "telegram": {
+    "enabled": false,
+    "aliases": {}
+  },
+  "city": "Москва",
+  "search_engine": "yandex",
+  "beep": false,
+  "log_level": "INFO",
+  "llm": {
+    "enabled": true,
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key": "",
+    "model": "deepseek-chat",
+    "max_tokens": 200,
+    "temperature": 0.6,
+    "history_messages": 6,
+    "timeout": 60,
+    "thinking_filler": "Секунду, сэр.",
+    "computer_control": true,
+    "tool_rounds": 3
+  }
+}

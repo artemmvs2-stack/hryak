@@ -1,6 +1,7 @@
 """Клиент GigaAM: отдельный процесс с моделью и обмен JSON-строками.
 
-GigaAM живёт в venv_gigaam и не конфликтует с torch основного venv.
+В исходной версии GigaAM живёт в venv_gigaam и не конфликтует с torch
+основного venv; в портативной сборке используется встроенный Python.
 При любой ошибке распознавания Listener остаётся на тексте Vosk.
 """
 from __future__ import annotations

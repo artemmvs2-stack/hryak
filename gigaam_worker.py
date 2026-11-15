@@ -1,7 +1,8 @@
 """GigaAM worker: держит модель в памяти и распознаёт WAV по JSON-запросам.
 
 Используется GigaAM v3 CTC в ONNX через onnx-asr: не нужны torch, ffmpeg
-и torchaudio. Запускается отдельным процессом из venv_gigaam, общение —
+и torchaudio. Запускается отдельным процессом (venv_gigaam в исходной
+версии или встроенный Python в портативной сборке), общение —
 по одной JSON-строке на stdin/stdout; вывод библиотек уходит в stderr.
 """
 from __future__ import annotations

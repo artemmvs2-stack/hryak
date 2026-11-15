@@ -27,6 +27,10 @@ tools/bench_astra*.py
 tools/bench_luna.py
 tools/bench_star*.py
 
+# Сборка портативного приложения
+build_portable/
+dist/
+
 # Редакторы и ОС
 .vscode/
 .idea/
