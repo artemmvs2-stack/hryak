@@ -759,7 +759,9 @@ def _handle_word(text: str, raw: str = "") -> str | None:
             return f"Заменил «{old}» на «{new}», сэр."
         return "Не удалось заменить текст, сэр."
 
-    if re.fullmatch(r"(?:закрой|закрыть)\s+(?:документ|ворд)(?:\s+без\s+сохранения)?", text):
+    if re.fullmatch(
+        r"(?:закрой|закрыть)\s+документ(?:\s+без\s+сохранения)?", text
+    ):
         save = "без сохранения" not in text
         name = word.close_document(save=save)
         if name is None:
@@ -987,13 +989,13 @@ def handle(brain, text: str) -> str | None:
     """Возвращает ответ или None, если команда не распознана."""
     raw = getattr(brain, "_raw_text", "")
     for handler in (
+        _handle_word,
         _handle_windows,
         _handle_clipboard,
         _handle_browser_page,
         _handle_system,
         _handle_folders,
         _handle_settings,
-        _handle_word,
         _handle_files,
         _handle_units,
         _handle_password,
