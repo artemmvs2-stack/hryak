@@ -1139,6 +1139,119 @@ def browser_page_url() -> str:
     return ""
 
 
+def browser_available() -> bool:
+    """Есть ли открытое окно браузера."""
+    return _browser_window() is not None
+
+
+def _page_link_controls(win, limit: int = 30) -> list[tuple[str, object]]:
+    """Ссылки на странице активной вкладки в порядке сверху вниз.
+
+    Сначала берутся ссылки внутри элементов списков — на страницах поиска
+    это результаты, а не меню и шапка сайта. Если списков нет, остаются
+    все видимые ссылки страницы.
+    """
+    try:
+        roots = win.descendants(control_type="Document") or []
+    except Exception:  # noqa: BLE001
+        roots = []
+    if not roots:
+        roots = [win]
+
+    def _visible(control) -> tuple[int, int] | None:
+        try:
+            rect = control.rectangle()
+        except Exception:  # noqa: BLE001
+            return None
+        if rect.top < -300 or rect.right <= rect.left:
+            return None
+        return rect.top, rect.left
+
+    def _name(control) -> str:
+        try:
+            return " ".join((control.window_text() or "").split())
+        except Exception:  # noqa: BLE001
+            return ""
+
+    listed: list[tuple[int, int, str, object]] = []
+    others: list[tuple[int, int, str, object]] = []
+    for root in roots:
+        try:
+            items = root.descendants(control_type="ListItem")
+        except Exception:  # noqa: BLE001
+            items = []
+        for item in items:
+            place = _visible(item)
+            if place is None:
+                continue
+            try:
+                children = item.descendants(control_type="Hyperlink")
+            except Exception:  # noqa: BLE001
+                continue
+            for child in children:
+                name = _name(child)
+                if name:
+                    listed.append((place[0], place[1], name, child))
+        try:
+            children = root.descendants(control_type="Hyperlink")
+        except Exception:  # noqa: BLE001
+            continue
+        for child in children:
+            place = _visible(child)
+            if place is None:
+                continue
+            name = _name(child)
+            if name:
+                others.append((place[0], place[1], name, child))
+
+    ordered = listed or others
+    ordered.sort(key=lambda entry: (entry[0], entry[1]))
+    found: list[tuple[str, object]] = []
+    seen: set[str] = set()
+    for _top, _left, name, control in ordered:
+        if name in seen:
+            continue
+        seen.add(name)
+        found.append((name, control))
+        if len(found) >= limit:
+            break
+    return found
+
+
+def browser_link_titles(limit: int = 10) -> list[str]:
+    """Названия первых ссылок на открытой странице."""
+    win = _browser_window()
+    if win is None:
+        return []
+    return [name for name, _ in _page_link_controls(win, limit)]
+
+
+def browser_open_link(number: int) -> str:
+    """Открывает ссылку № number на текущей странице. Возвращает её название."""
+    if number < 1:
+        return ""
+    win = _browser_window()
+    if win is None:
+        return ""
+    links = _page_link_controls(win, max(number, 20))
+    if number > len(links):
+        return ""
+    name, control = links[number - 1]
+    try:
+        control.invoke()
+        log.info("Браузер: открыл ссылку №%s «%s»", number, name)
+        return name
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        control.click_input()
+        log.info("Браузер: кликнул ссылку №%s «%s»", number, name)
+        return name
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Не удалось открыть ссылку №%s: %s", number, exc)
+        return ""
+
+
 def _is_video_page() -> bool:
     url = browser_page_url()
     if url:

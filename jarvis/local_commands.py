@@ -78,7 +78,62 @@ def _words_to_digits(text: str) -> str:
     return re.sub(pattern, lambda match: str(words[match.group(1)]), text)
 
 
+_LINK_ORDINALS = {
+    "первую": 1, "первая": 1, "первый": 1, "первой": 1, "первого": 1,
+    "вторую": 2, "вторая": 2, "второй": 2, "второго": 2,
+    "третью": 3, "третья": 3, "третий": 3, "третьей": 3, "третьего": 3,
+    "четвертую": 4, "четвертая": 4, "четвертый": 4, "четвертой": 4,
+    "четвертого": 4,
+    "пятую": 5, "пятая": 5, "пятый": 5, "пятой": 5, "пятого": 5,
+    "шестую": 6, "шестая": 6, "шестой": 6, "шестого": 6,
+    "седьмую": 7, "седьмая": 7, "седьмой": 7, "седьмого": 7,
+    "восьмую": 8, "восьмая": 8, "восьмой": 8, "восьмого": 8,
+    "девятую": 9, "девятая": 9, "девятый": 9, "девятой": 9,
+    "девятого": 9,
+    "десятую": 10, "десятая": 10, "десятый": 10, "десятой": 10,
+}
+
+
+def _link_number(value: str) -> int | None:
+    """Номер ссылки из слова: «первую», «2», «номер три»."""
+    word = re.sub(r"^номер\s+", "", (value or "").strip().lower()).strip()
+    word = word.replace("ё", "е")
+    if word.isdigit():
+        number = int(word)
+        return number if 1 <= number <= 30 else None
+    if word in _LINK_ORDINALS:
+        return _LINK_ORDINALS[word]
+    digits = _words_to_digits(word)
+    if digits.isdigit() and 1 <= int(digits) <= 30:
+        return int(digits)
+    return None
+
+
+def _handle_browser_link(text: str) -> str | None:
+    """Открывает ссылку по номеру на текущей странице браузера."""
+    match = re.fullmatch(
+        r"(?:открой|открыть|нажми|нажать|кликни|кликнуть|тыкни)\s+"
+        r"(?:на\s+)?(?:(?:ссылку|ссылке)\s+(?:номер\s+)?(.+)|"
+        r"(?:номер\s+)?(.+?)\s+ссылк[уае])",
+        text,
+    )
+    if not match:
+        return None
+    number = _link_number(match.group(1) or match.group(2) or "")
+    if number is None:
+        return None
+    name = actions.browser_open_link(number)
+    if name:
+        return f"Открыл ссылку «{_truncate(name)}», сэр."
+    if not actions.browser_available():
+        return "Не вижу открытого браузера, сэр."
+    return "Не нашёл такую ссылку на странице, сэр."
+
+
 def _handle_browser_page(text: str) -> str | None:
+    answer = _handle_browser_link(text)
+    if answer is not None:
+        return answer
     if re.fullmatch(
         r"(?:обнови|обновить|перезагрузи|перезагрузить)\s+"
         r"(?:страницу|вкладку|браузер)",
@@ -988,6 +1043,9 @@ def _handle_small_stuff(text: str) -> str | None:
 def handle(brain, text: str) -> str | None:
     """Возвращает ответ или None, если команда не распознана."""
     raw = getattr(brain, "_raw_text", "")
+    answer = _handle_browser_link(text)
+    if answer is not None:
+        return answer
     for handler in (
         _handle_word,
         _handle_windows,
