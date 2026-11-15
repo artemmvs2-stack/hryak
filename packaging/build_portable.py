@@ -76,9 +76,15 @@ def run(command: list[str], **kwargs) -> None:
 
 def download_python() -> None:
     CACHE.mkdir(parents=True, exist_ok=True)
-    if PY_EMBED.is_file() and PY_EMBED.stat().st_size > 5_000_000:
+    if (
+        PY_EMBED.is_file()
+        and PY_EMBED.stat().st_size > 5_000_000
+        and zipfile.is_zipfile(PY_EMBED)
+    ):
         log(f"Python уже скачан: {PY_EMBED.name}")
         return
+    if PY_EMBED.exists():
+        PY_EMBED.unlink()
     log(f"Скачиваю {PY_URL}")
     try:
         with urllib.request.urlopen(PY_URL, timeout=120) as response:

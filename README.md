@@ -334,8 +334,8 @@ Jarvis/
 
 ## Сборка портативного приложения
 
-Готовый `Hryak.exe` собирается скриптом (нужны интернет и .NET Framework 4.x,
-который уже есть в Windows 10/11):
+Готовый `Hryak.exe` собирается скриптом (нужны интернет, .NET Framework 4.x
+и установленные зависимости из `requirements.txt`):
 
 ```bat
 build_windows.bat
