@@ -9,8 +9,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Портативный голосовой ассистент для Windows")]
 [assembly: AssemblyProduct("Хряк (Jarvis)")]
 [assembly: AssemblyCompany("hryak")]
-[assembly: AssemblyVersion("1.1.1.0")]
-[assembly: AssemblyFileVersion("1.1.1.0")]
+[assembly: AssemblyVersion("1.1.2.0")]
+[assembly: AssemblyFileVersion("1.1.2.0")]
 
 namespace HryakLauncher
 {
