@@ -1068,6 +1068,37 @@ def _browser_window_for(key: str = ""):
     return None
 
 
+def type_chars(text: str) -> bool:
+    """Печатает текст посимвольно, без буфера обмена.
+
+    Вставка через Ctrl+V не работает в адресной строке Яндекс Браузера,
+    поэтому адрес и поисковые запросы вводятся обычным набором.
+    """
+    payload = text or ""
+    if not payload:
+        return False
+    try:
+        from pywinauto.keyboard import send_keys  # noqa: PLC0415
+
+        escaped = (
+            payload.replace("{", "{{}")
+            .replace("}", "{}}")
+            .replace("+", "{+}")
+            .replace("^", "{^}")
+            .replace("%", "{%}")
+            .replace("~", "{~}")
+            .replace("(", "{(}")
+            .replace(")", "{)}")
+            .replace("[", "{[}")
+            .replace("]", "{]}")
+        )
+        send_keys(escaped, with_spaces=True, pause=0.01)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Не удалось напечатать текст: %s", exc)
+        return False
+
+
 def _address_bar_text(win) -> str:
     """Текст адресной строки окна браузера (пусто, если не прочитать)."""
     try:
@@ -1116,7 +1147,7 @@ def navigate_browser(url: str, browser: str = "") -> bool:
             # F6 надёжнее Ctrl+L: в Яндекс Браузере Ctrl+L может не работать.
             send_keys("{F6}")
             time.sleep(0.25)
-            if not type_text(url):
+            if not type_chars(url):
                 raise RuntimeError("не удалось напечатать адрес")
             time.sleep(0.15)
             send_keys("{ENTER}")
