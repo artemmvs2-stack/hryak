@@ -935,24 +935,101 @@ def _browser_window():
     return candidates[0][1]
 
 
-def _focus_window(win) -> bool:
+def _foreground_handle() -> int:
     try:
-        win.set_focus()
-        time.sleep(0.15)
-        return True
+        import win32gui  # noqa: PLC0415
+
+        return int(win32gui.GetForegroundWindow() or 0)
     except Exception:  # noqa: BLE001
-        pass
+        return 0
+
+
+def _wait_foreground(handle: int, timeout: float = 0.4) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _foreground_handle() == handle:
+            return True
+        time.sleep(0.05)
+    return _foreground_handle() == handle
+
+
+def _focus_window(win) -> bool:
+    """Выводит окно на передний план и проверяет, что это получилось.
+
+    Windows не даёт фоновому процессу просто так украсть фокус, поэтому
+    сначала пробуем pywinauto, затем AttachThreadInput и трюк с Alt.
+    Свёрнутое окно обязательно разворачиваем: иначе фокус формально есть,
+    а клавиатура до окна не доходит.
+    """
+    handle = int(getattr(win, "handle", 0) or 0)
+    if not handle:
+        return False
     try:
         import win32con  # noqa: PLC0415
         import win32gui  # noqa: PLC0415
 
-        handle = win.handle
-        win32gui.ShowWindow(handle, win32con.SW_RESTORE)
-        win32gui.SetForegroundWindow(handle)
-        time.sleep(0.15)
+        if win32gui.IsIconic(handle):
+            win32gui.ShowWindow(handle, win32con.SW_RESTORE)
+            time.sleep(0.35)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        if win.is_minimized():
+            win.restore()
+            time.sleep(0.35)
+    except Exception:  # noqa: BLE001
+        pass
+    if _foreground_handle() == handle:
         return True
+    try:
+        win.set_focus()
+    except Exception:  # noqa: BLE001
+        pass
+    if _wait_foreground(handle, 0.4):
+        return True
+
+    try:
+        import win32api  # noqa: PLC0415
+        import win32con  # noqa: PLC0415
+        import win32gui  # noqa: PLC0415
+        import win32process  # noqa: PLC0415
     except Exception:  # noqa: BLE001
         return False
+
+    try:
+        win32gui.ShowWindow(handle, win32con.SW_RESTORE)
+    except Exception:  # noqa: BLE001
+        pass
+
+    for _ in range(3):
+        try:
+            current = _foreground_handle()
+            target_thread = win32process.GetWindowThreadProcessId(current)[0]
+            own_thread = win32api.GetCurrentThreadId()
+            if target_thread and target_thread != own_thread:
+                win32process.AttachThreadInput(target_thread, own_thread, True)
+            try:
+                win32gui.BringWindowToTop(handle)
+                win32gui.SetForegroundWindow(handle)
+            finally:
+                if target_thread and target_thread != own_thread:
+                    win32process.AttachThreadInput(target_thread, own_thread, False)
+        except Exception:  # noqa: BLE001
+            pass
+        if _wait_foreground(handle, 0.3):
+            return True
+        try:
+            # Нажатие Alt снимает блокировку SetForegroundWindow.
+            win32gui.keybd_event(win32con.VK_MENU, 0, 0, 0)
+            win32gui.keybd_event(
+                win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0
+            )
+            win32gui.SetForegroundWindow(handle)
+        except Exception:  # noqa: BLE001
+            pass
+        if _wait_foreground(handle, 0.3):
+            return True
+    return _foreground_handle() == handle
 
 
 def _browser_window_for(key: str = ""):
@@ -991,27 +1068,71 @@ def _browser_window_for(key: str = ""):
     return None
 
 
+def _address_bar_text(win) -> str:
+    """Текст адресной строки окна браузера (пусто, если не прочитать)."""
+    try:
+        for child in win.descendants(control_type="Edit"):
+            try:
+                text = (child.window_text() or "").strip()
+            except Exception:  # noqa: BLE001
+                continue
+            if text.startswith(("http://", "https://", "about:")):
+                return text
+    except Exception:  # noqa: BLE001
+        return ""
+    return ""
+
+
+def _window_title(win) -> str:
+    try:
+        return win.window_text() or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _url_landed(win, url: str, before_title: str = "", timeout: float = 2.5) -> bool:
+    """Дошла ли навигация: сменился адрес или хотя бы заголовок вкладки."""
+    host = re.sub(r"^https?://", "", url).split("/")[0].lower()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        current = _address_bar_text(win).lower()
+        if host and host in current:
+            return True
+        title = _window_title(win)
+        if before_title and title and title != before_title:
+            return True
+        time.sleep(0.2)
+    return False
+
+
 def navigate_browser(url: str, browser: str = "") -> bool:
     """Открывает URL в текущей вкладке браузера, без нового окна."""
     win = _browser_window_for(browser)
-    if win is None:
-        return False
-    if not _focus_window(win):
-        return False
-    try:
-        from pywinauto.keyboard import send_keys  # noqa: PLC0415
+    if win is not None and _focus_window(win):
+        before_title = _window_title(win)
+        try:
+            from pywinauto.keyboard import send_keys  # noqa: PLC0415
 
-        send_keys("^l")
-        time.sleep(0.2)
-        if not type_text(url):
-            return False
-        time.sleep(0.15)
-        send_keys("{ENTER}")
-        time.sleep(0.4)
-        log.info("Браузер: открыл в текущей вкладке %s", url)
+            # F6 надёжнее Ctrl+L: в Яндекс Браузере Ctrl+L может не работать.
+            send_keys("{F6}")
+            time.sleep(0.25)
+            if not type_text(url):
+                raise RuntimeError("не удалось напечатать адрес")
+            time.sleep(0.15)
+            send_keys("{ENTER}")
+            if _url_landed(win, url, before_title, 3.0):
+                log.info("Браузер: открыл в текущей вкладке %s", url)
+                return True
+            log.warning("Браузер: адрес не сменился, открываю иначе %s", url)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Не удалось открыть %s в текущей вкладке: %s", url, exc)
+    # Клавиатура не дошла до браузера — открываем страницу штатно.
+    try:
+        os.startfile(url)  # noqa: S606
+        log.info("Браузер: открыл через систему %s", url)
         return True
     except Exception as exc:  # noqa: BLE001
-        log.warning("Не удалось открыть %s в текущей вкладке: %s", url, exc)
+        log.warning("Не удалось открыть %s: %s", url, exc)
         return False
 
 
