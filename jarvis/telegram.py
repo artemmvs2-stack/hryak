@@ -22,6 +22,8 @@ from . import actions
 
 TG_PROCESS = "telegram.exe"
 SAVED_NAMES = {"избранное", "избранные", "saved messages", "себе", "себя"}
+# Контакты, которым ассистент не отправляет сообщения ни при каких условиях.
+BLOCKED_CONTACTS = ("алина баймурзаева",)
 TYPE_PREFIXES = ("группа, ", "канал, ", "бот, ")
 MIN_MATCH = 0.92
 SEND_MIN_MATCH = 0.92
@@ -123,6 +125,49 @@ def _phon(text: str) -> str:
     value = value.replace("y", "i")
     value = re.sub(r"[^a-z0-9 ]", "", value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _stem(word: str) -> str:
+    """Грубая основа слова: «Алине», «Алина», «Алиной» -> «алин»."""
+    for suffix in (
+        "ой", "ей", "ую", "юю", "ая", "яя", "ые", "ие", "ом", "ем",
+        "ами", "ями", "ах", "ях", "ы", "и", "а", "я", "у", "ю", "е", "о",
+    ):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[: -len(suffix)]
+    return word
+
+
+def blocked_contact(name: str) -> str:
+    """Возвращает запрещённое имя, если адресат совпадает с ним.
+
+    Слова сравниваются по отдельности, поэтому ловятся «Алина Баймурзаева»,
+    «Баймурзаева Алина» и падежи вроде «Алине Баймурзаевой». Одно имя
+    «Алина» запретом не считается — тёзки остаются доступны.
+    """
+    words = _norm(name).split()
+    if not words:
+        return ""
+    for blocked in BLOCKED_CONTACTS:
+        parts = blocked.split()
+        if not parts:
+            continue
+        if all(
+            any(
+                difflib.SequenceMatcher(
+                    None, _stem(part), _stem(word)
+                ).ratio() >= 0.86
+                for word in words
+            )
+            for part in parts
+        ):
+            return blocked
+    return ""
+
+
+def is_blocked_contact(name: str) -> bool:
+    """True, если этому контакту отправлять сообщения запрещено."""
+    return bool(blocked_contact(name))
 
 
 def _token_score(a: str, b: str) -> float:
@@ -758,12 +803,23 @@ def send_message(contact: str, text: str, log=None) -> TelegramResult:
     if not text:
         return TelegramResult(False, error="empty")
 
+    contact = _canonical(contact) if contact else ""
+    if contact:
+        # «напиши алине баймурзаевой привет» иногда разбирается как
+        # контакт «алине» + сообщение «баймурзаевой привет» — проверяем
+        # и такое склеенное начало. До окна Telegram дело не доходит.
+        requested = " ".join([contact, *text.split()[:2]]).strip()
+        blocked = blocked_contact(requested)
+        if blocked:
+            if log:
+                log.info("Telegram: отправка контакту %r запрещена", blocked)
+            return TelegramResult(False, chat=blocked, error="blocked")
+
     dlg = _ensure_window(log)
     if dlg is None:
         return TelegramResult(False, error="telegram")
 
     try:
-        contact = _canonical(contact) if contact else ""
         if contact:
             opened = open_chat(contact, log)
             # Если совпадение слабое, возможно, часть имени распозналась
@@ -839,6 +895,13 @@ def send_message(contact: str, text: str, log=None) -> TelegramResult:
             chat = _active_chat(dlg)
             if not chat:
                 return TelegramResult(False, error="no_chat")
+
+        # Проверяем и фактический заголовок чата: «Алина» могла открыть
+        # именно запрещённый контакт.
+        if blocked_contact(chat or contact):
+            if log:
+                log.info("Telegram: отправка в %r запрещена", chat)
+            return TelegramResult(False, chat=chat, error="blocked")
 
         if not _force_foreground(dlg):
             return TelegramResult(False, chat=chat, error="focus")

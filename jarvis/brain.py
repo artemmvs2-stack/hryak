@@ -1354,6 +1354,9 @@ class Brain:
             return f"Не нашёл чат «{contact}», сэр."
         if result.error == "no_chat":
             return "Откройте чат в Telegram или назовите контакт, сэр."
+        if result.error == "blocked":
+            name = result.chat or contact or "этому контакту"
+            return f"Отправка сообщений контакту «{name}» запрещена, сэр."
         if result.error == "no_input":
             return "В этом чате нельзя писать, сэр."
         if result.error == "wrong_chat":
